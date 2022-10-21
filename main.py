@@ -1,6 +1,4 @@
 import os
-from tempfile import TemporaryFile
-import time
 import json
 import csv
 import logging
@@ -63,50 +61,51 @@ def amazon_availability(url):
     driver.get(url)
 
     try:
-        products = driver.find_elements(By.CLASS_NAME, "a-size-medium")
+        products = driver.find_elements('xpath', '//*[@data-csa-c-item-id]')
     except NoSuchElementException:
         logging.error(f"{url} Unable to find any relevant products on this url")
         return
     else:
-        product_info = [product for product in products if "PlayStation 5 Console" in product.text]
-        for item in product_info:
-            product_dict = {}
-            product_name = item.text
+        product_info = [product.text.split("\n") for product in products]
+        product_urls = []
+        # get url for each product and add it to list - the site sometimes includes product indexes for items that aren't there, therefore although 16 products are shown on the first page,
+        # the sample used to loop is greater to account for these extra index elements
+        for x in range(3, 20):
             try:
-                product_url = driver.find_element('xpath', f'//*[@id="search"]/div[1]/div[1]/div/span[3]/div[2]/div[3]/div/div/div/div/div/div[2]/div/div/div[1]/h2/a').get_attribute("href")
+                product_url = driver.find_element('xpath', f'//*[@id="search"]/div[1]/div[1]/div/span[3]/div[2]/div[{x}]/div/div/div/div/div/div[1]/div/div[2]/div/span/a')
+                product_urls.append(product_url.get_attribute("href"))
             except NoSuchElementException:
-                logging.error(f"{url} Unable to retrieve url for the product: {product_name}")
-            else:
-                product_dict["Product Name"] = product_name
-                product_dict["URL"] = f"{product_url}"
-                product_dict["Product Check Timestamp"] = datetime.now()
-                try:
-                    stock_status = driver.find_element('xpath', f'//*[@class="s-card-container"]/div/div/div[2]/div/div/div[2]/div[1]/div/div[2]/div/span/span')
-                except NoSuchElementException:
-                    logging.info(f"{product_url} item currently assumed to be available as no out of stock message is present")
-                else:
-                    status_text = stock_status.get_attribute("innerHTML")
-                    check_phrases(status_text, product_dict)
-                    update_all_products(product_dict)
-                    continue
+                logging.error(f"{url} Unable to retrieve url for the product no.{x-2}")
+        # add each found url to the end of its corresponding item_info list
+        for y in range(len(product_info)):
+            product_info[y].append(product_urls[y])
 
-                try:
-                    stock_status = driver.find_element('xpath', f'//*[@class="s-card-container"]/div/div/div[2]/div/div/div[3]/div[1]/div/div[2]/div[2]/span/span')
-                except NoSuchElementException:
-                    logging.info(f"{product_url} item currently assumed to be available without needing to request invitation as request message is present")
-                    try:
-                        stock_status = driver.find_element('xpath', f'//*[@class="s-card-container"]/div/div/div[2]/div/div/div[3]/div[1]/div/div[2]/div[1]/div[2]/span/span')
-                    except NoSuchElementException:
-                        logging.info(f"{product_url} item assumed to be unavailable through Amazon as there is no 'FREE Delivery' message")
-                        product_dict["Availability Status"] = "Not Available"
-                        update_all_products(product_dict)
-                    else:
-                        product_dict["Availability Status"] = "Available"
-                        update_all_products(product_dict)
-                else:
-                    status_text = stock_status.get_attribute("innerHTML")
-                    check_phrases(status_text, product_dict)
-                    update_all_products(product_dict)
+        for item_info in product_info:
+            product_dict = {}
+            product_name = item_info[0]
+            product_url = item_info[-1]
+
+            if "PlayStation 5 Console" not in product_name:
+                continue
+
+            product_dict["Product Name"] = product_name
+            product_dict["URL"] = f"{product_url}"
+            product_dict["Product Check Timestamp"] = datetime.now()
+
+            stock_status = item_info[-2]
+            check_phrases(stock_status, product_dict)
+            if product_dict["Availability Status"] in ["Not Available", "Available by request", "Available for pre-order"]:
+                update_all_products(product_dict)
+                continue
+
+            if "FREE Delivery" or "FREE Delivery by Amazon" in item_info:
+                product_dict["Availability Status"] = "Available"
+                logging.info(f"{product_url} item is available as identified by the 'FREE delivery' text")
+            else:
+                product_dict["Availability Status"] = "Not Available"
+                logging.info(f"{product_url} item is likely not available as there is no sign of the 'FREE delivery' text")
+            
+            update_all_products(product_dict)
     return
 
 
