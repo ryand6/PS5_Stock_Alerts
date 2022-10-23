@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import csv
 import logging
@@ -6,19 +7,21 @@ import smtplib
 import ssl
 from datetime import datetime
 from email.message import EmailMessage
-from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
 logging.basicConfig(filename="log.txt", level=logging.INFO, format="%(levelname)s %(asctime)s %(message)s")
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
 
-sender = "sender-emailaddress"
-receiver = "receiver-emailaddress"
-password = ""
+sender = "sender@email"
+receiver = "receiver@email"
+password = os.environ.get("Enter Password Variable")
 
 msg = EmailMessage()
 msg["from"] = sender
@@ -34,12 +37,14 @@ preorder_phrases = ["pre-order now"]
 headers = ["Product Name", "URL", "Availability Status", "Product Check Timestamp", "Email Sent"]
 
 all_products = []
+store = ""
+
+amazon_url = "https://www.amazon.co.uk/s?k=playstation+5+console&i=videogames&crid=3MTP2XNDB5AIL&sprefix=playstation+5+console%2Cvideogames%2C65&ref=nb_sb_noss_1"
+currys_url = "https://www.currys.co.uk/gaming/consoles/consoles/sony/ps5"
+game_url = "https://www.game.co.uk/en/playstation/consoles/ps5"
 
 
 def main():
-    currys_url = "https://www.currys.co.uk/gaming/consoles/consoles/sony/ps5"
-    amazon_url = "https://www.amazon.co.uk/s?k=playstation+5+console&i=videogames&crid=3MTP2XNDB5AIL&sprefix=playstation+5+console%2Cvideogames%2C65&ref=nb_sb_noss_1"
-
     with open("all_products.csv") as products_infile:
         reader = csv.DictReader(products_infile)
         for line in reader:
@@ -47,6 +52,7 @@ def main():
     
     amazon_availability(amazon_url)
     currys_availability(currys_url)
+    game_availability(game_url)
 
     with open("all_products.csv", "w", newline="") as products_outfile:
         writer = csv.DictWriter(products_outfile, fieldnames=headers)
@@ -58,18 +64,21 @@ def main():
 
 def amazon_availability(url):
     """Get products info and availability status from Amazon online store"""
+    global store
+    store = "Amazon"
+    
     driver.get(url)
 
     try:
         products = driver.find_elements('xpath', '//*[@data-csa-c-item-id]')
     except NoSuchElementException:
-        logging.error(f"{url} Unable to find any relevant products on this url")
+        logging.error(f"{url} Unable to find any relevant products on this page")
         return
     else:
         product_info = [product.text.split("\n") for product in products]
         product_urls = []
         # get url for each product and add it to list - the site sometimes includes product indexes for items that aren't there, therefore although 16 products are shown on the first page,
-        # the sample used to loop is greater to account for these extra index elements
+        # the sample used to loop is greater to account for these additional iterations
         for x in range(3, 20):
             try:
                 product_url = driver.find_element('xpath', f'//*[@id="search"]/div[1]/div[1]/div/span[3]/div[2]/div[{x}]/div/div/div/div/div/div[1]/div/div[2]/div/span/a')
@@ -111,12 +120,15 @@ def amazon_availability(url):
 
 def currys_availability(url):
     """Get products info and availability status from Currys online store"""
+    global store
+    store = "Currys"
+
     driver.get(url)
 
     try:
         products = driver.find_elements(By.CLASS_NAME, 'product-item-element')
     except NoSuchElementException:
-        logging.error(f"{url} Unable to find any relevant products on this url")
+        logging.error(f"{url} Unable to find any relevant products on this page")
         return
     else:
         product_ids = [product.get_attribute("id") for product in products]
@@ -126,7 +138,6 @@ def currys_availability(url):
             try: 
                 product_info = driver.find_element('xpath', f'//*[@id="{id}"]/div[1]/div/div[1]/div[1]/div[2]/div[2]/div[1]/span[1]/div/a').get_attribute("data-datalayer-config")
             except NoSuchElementException:
-                # log error: product info couldn't be obtained
                 logging.error(f"{url} Unable to retrieve any product info for the product id: {id}")
                 return
             else:
@@ -148,6 +159,82 @@ def currys_availability(url):
                     check_phrases(status_text, product_dict)
                     update_all_products(product_dict)
     return
+
+
+def game_availability(url):
+    """Get availability status of products on GAME online store - because availability can only be found when adding items to basket, which when done too many times blocks users from adding more, this function just looks for if any products are available at all"""
+    global store
+    store = "GAME"
+    
+    driver.get(url)
+
+    # get counter for number of products checked within a time window - if more than 3 products are attempted to be put in basket, site will 
+    # likely block you from trying any more within a time limit
+    products_checked_in_time_window = 0
+
+    try:
+        products = driver.find_elements('xpath', './/*[@class="productHeader"]/h2/a')
+    except NoSuchElementException:
+        logging.error(f"{url} Unable to find any relevant products on this page")
+        return
+    else:
+        product_urls = [product.get_attribute("href") for product in products]
+        for product_url in product_urls:
+            products_checked_in_time_window += 1
+            # script has to wait a large window of time if 3x items are checked but none are available, as they cannot add any more to the basket in a small window of time
+            if products_checked_in_time_window > 3:
+                time.sleep(600)
+                products_checked_in_time_window = 1
+            driver.get(product_url)
+            product_dict = {}
+            product_dict["Product Name"] = driver.find_element('xpath', '//*[@id="pdp"]/h1').get_attribute("innerHTML")
+            product_dict["URL"] = str(driver.current_url)
+            product_dict["Product Check Timestamp"] = datetime.now()
+            time.sleep(1)
+            driver.find_element('xpath', '//*[@id="mainPDPButtons"]/li[1]/a').click()
+            time.sleep(1)
+            # refresh page to remove basket notification
+            driver.refresh()
+            time.sleep(1)
+            driver.find_element(By.ID, 'basketLink').click()
+            try:
+                driver.find_element(By.CLASS_NAME, 'basket-warning')
+            except NoSuchElementException:
+                try:
+                    driver.find_element(By.ID, 'emptyBasketEspot')
+                except NoSuchElementException:
+                    logging.info(f'{product_dict["URL"]} basket is not empty')
+                    try:
+                        basket_url = driver.find_element('xpath', '/html/body/div[5]/div[1]/div/div[1]/div/div/div[1]/div[1]/a')
+                    except NoSuchElementException:
+                        logging.error(f'{product_dict["URL"]} product not found in basket despite the basket not being empty - potential "too many items added to basket in short period of time" error')
+                    else:
+                        if product_dict["URL"] == basket_url.get_attribute("href"):
+                            product_dict["Availability Status"] = "Available"
+                            logging.info(f'{product_dict["URL"]} AVAILABLE - item was able to be placed in basket')
+                            update_all_products(product_dict)
+                            # remove item from basket
+                            driver.find_element('xpath', '/html/body/div[5]/div[1]/div/div[1]/div/div/div[1]/div[2]/div/a').click()
+                            # confirm remove
+                            try:
+                                # wait 5 seconds before looking for element
+                                confirm_remove = WebDriverWait(driver, 5).until(
+                                    EC.presence_of_element_located((By.ID, 'confirmRemove'))
+                                )
+                            except TimeoutException:
+                                logging.error(f'{product_dict["URL"]} timeout occurred trying to remove product from basket')
+                            else:
+                                confirm_remove.click()
+                                # end function as soon as a product is found to be available
+                                return
+                        else:
+                            logging.error(f'{product_dict["URL"]} product url in basket does not match')
+                else:
+                    logging.error(f'{product_dict["URL"]} product has not been added to basket')
+            else:
+                logging.info(f'{product_dict["URL"]} NOT AVAILABLE received basket warning message stating product is out of stock')
+                product_dict["Availability Status"] = "Not Available"
+                update_all_products(product_dict)
 
 
 def check_phrases(text, product_dict):
@@ -199,7 +286,6 @@ def send_email(product_dict):
     if product_dict["Email Sent"] == False:
         if product_dict["Availability Status"] == "Available":
             # send available email template
-            product_available_email(product_dict)
             product_dict["Email Sent"] = True
         elif product_dict["Availability Status"] == "Available by request":
             # send available by request email template
@@ -207,14 +293,27 @@ def send_email(product_dict):
         elif product_dict["Availability Status"] == "Available for pre-order":
             # send pre-order email template
             product_dict["Email Sent"] = True
+
+        if product_dict["Availability Status"] != "Not Available":
+            product_available_email(product_dict)
+
+    # give emails time to fire so that they don't miss their sends
+    time.sleep(1)
     return product_dict
 
 
 def product_available_email(product_dict):
     """Send email if product is available"""
-    msg_body = f"""
-    {product_dict["Product Name"]} is currently available at {product_dict["URL"]}
-    """
+    global store
+
+    if store == "GAME":
+            msg_body = f"""
+            PS5's are currently available at {game_url}
+            """
+    else:
+        msg_body = f"""
+        {product_dict["Product Name"]} is currently {product_dict["Availability Status"].lower()} at {product_dict["URL"]}
+        """
     msg.set_content(msg_body)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as smtp:
