@@ -16,12 +16,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 
-logging.basicConfig(filename="log.txt", level=logging.INFO, format="%(levelname)s %(asctime)s %(message)s")
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
-
 sender = "sender@email"
 receiver = "receiver@email"
-password = os.environ.get("Enter Password Variable")
+password = os.environ.get("Enter Password Variable Name")
 
 msg = EmailMessage()
 msg["from"] = sender
@@ -36,7 +33,6 @@ preorder_phrases = ["pre-order now"]
 
 headers = ["Product Name", "URL", "Availability Status", "Product Check Timestamp", "Email Sent"]
 
-all_products = []
 store = ""
 
 amazon_url = "https://www.amazon.co.uk/s?k=playstation+5+console&i=videogames&crid=3MTP2XNDB5AIL&sprefix=playstation+5+console%2Cvideogames%2C65&ref=nb_sb_noss_1"
@@ -45,6 +41,14 @@ game_url = "https://www.game.co.uk/en/playstation/consoles/ps5"
 
 
 def main():
+    logging.basicConfig(filename="log.txt", level=logging.INFO, format="%(levelname)s %(asctime)s %(message)s")
+    
+    global driver
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+
+    global all_products
+    all_products = []
+
     with open("all_products.csv") as products_infile:
         reader = csv.DictReader(products_infile)
         for line in reader:
@@ -326,4 +330,18 @@ def product_available_email(product_dict):
 
         
 if __name__ == "__main__":
-    main()
+    while True:
+        number_of_checks = input("Number of times to check stock: ")
+        try:
+            number_of_checks = int(number_of_checks)
+        except ValueError:
+            continue
+        else:
+            if number_of_checks < 1:
+                continue
+            else:
+                break
+    
+    for _ in range(number_of_checks):
+        main()
+        time.sleep(300)
