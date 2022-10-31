@@ -9,3 +9,5 @@ script isn't working as intended.
 
 A csv file is also created to keep an inventory of the products that have been monitored, keeping track of their current availability status and the last time each
 specific product has been checked.
+
+PLEASE NOTE: this is for educational purposes and should not be used in any way that violates the TOS set by any of the websites accessed in the script.
